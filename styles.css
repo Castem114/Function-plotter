@@ -95,7 +95,7 @@ body {
   display: inline-block; width: 12px; height: 12px;
   border-radius: 3px; vertical-align: middle; margin-right: 6px;
 }
-.vis, .del {
+.vis, .del, .diff {
   appearance: none; border: none; background: transparent; cursor: pointer;
   color: var(--muted); font-size: 14px; line-height: 1;
 }
@@ -103,6 +103,12 @@ body {
 .vis.off { opacity: .3; }
 .del { float: right; }
 .del:hover { color: var(--danger); }
+.diff {
+  border: 1px solid var(--border); border-radius: 5px;
+  font-size: 11px; padding: 2px 5px; color: var(--accent);
+  margin-left: 4px; font-family: ui-monospace, Menlo, monospace;
+}
+.diff:hover { border-color: var(--accent); background: #f1f7ff; }
 .fn-input {
   flex: 1; min-width: 80px;
   border: none; outline: none; background: transparent;
@@ -115,7 +121,13 @@ body {
 }
 .fn-input:focus { outline: none; }
 .fn-input sup.math-exp, .fn-input sup {
-  font-size: 0.72em; vertical-align: super; line-height: 0;
+  /* 指数：更小字号、上标位置；光标随之缩小并落到基准的右上角 */
+  font-size: 0.7em;
+  vertical-align: super;
+  line-height: 1.05;
+  position: relative;
+  top: -0.15em;
+  caret-color: var(--ink);
 }
 .corr { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 7px; }
 .badge {

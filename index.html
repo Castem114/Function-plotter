@@ -6,7 +6,7 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <title>函数绘制器 · Function Plotter</title>
-  <link rel="stylesheet" href="styles.css?v=9" />
+  <link rel="stylesheet" href="styles.css?v=10" />
 </head>
 <body>
   <div class="app">
@@ -48,6 +48,10 @@
           <button class="ex" data-fn="sinx cosx">sinx·cosx</button>
           <button class="ex" data-fn="x=2">x=2（竖直线）</button>
           <button class="ex" data-fn="x=pi/2">x=π/2</button>
+          <button class="ex" data-fn="x^2+y^2=1">x²+y²=1（圆）</button>
+          <button class="ex" data-fn="x^2/4+y^2/9=1">椭圆</button>
+          <button class="ex" data-fn="y^2=x">y²=x（抛物线）</button>
+          <button class="ex" data-fn="(sin(x))'">求导 (sin(x))'</button>
         </div>
       </details>
 
@@ -65,6 +69,8 @@
           <li>全角 <code>（）</code>、<code>，</code>、<code>×÷</code> 自动转半角</li>
           <li><code>²³¹</code> 上标 → <code>^2 ^3 ^1</code></li>
           <li>常量：<code>pi e tau phi inf</code>，希腊字母 <code>π τ ∞</code></li>
+          <li>求导：<code>(sin(x))'</code> 对前面括号函数求 d/dx；或点输入框旁 <code>d/dx</code> 按钮</li>
+          <li>隐式方程（圆锥曲线）：<code>x^2+y^2=1</code>、<code>y^2=x</code> 等，含 <code>y</code> 即画 F(x,y)=0</li>
         </ul>
       </details>
     </aside>
@@ -78,7 +84,7 @@
     </main>
   </div>
 
-  <script src="expr.js?v=9"></script>
-  <script src="app.js?v=9"></script>
+  <script src="expr.js?v=10"></script>
+  <script src="app.js?v=10"></script>
 </body>
 </html>

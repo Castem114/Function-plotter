@@ -64,6 +64,10 @@
   };
 
   const VAR = 'x'; // 绘图自变量
+  // 第二自变量 y（用于隐式方程 F(x,y)=0）：通过全局槽传递，避免改动所有闭包签名
+  let __y = 0;
+  function setY(v) { __y = v; }
+  function getY() { return __y; }
 
   // 关键字集合（用于词法分析的最长匹配与拆分）
   const KEYWORDS = new Set([
@@ -96,6 +100,7 @@
     inf: '无穷大 ∞', infinity: '无穷大 ∞', '∞': '无穷大 ∞',
     min: '最小值', max: '最大值', mod: '取模', pow: '幂运算',
     root: '开 n 次方', gcd: '最大公约数', lcm: '最小公倍数',
+    "'": "求导 d/dx（对前面括号括住的函数，如 (sin(x))'）",
     atan2: '反正切(双参数)', hypot: '斜边长 √(a²+b²)',
     '√': '平方根', '°': '度→弧度 (×π/180)',
     '×': '乘号 → *', '÷': '除号 → /', '＾': '乘方 → ^',
@@ -243,8 +248,8 @@
       // 等号（仅用于 x= / y= 顶层形式）
       if (c === '=') { tokens.push({ type: 'EQ', value: '=', text: c }); i++; continue; }
 
-      // 运算符
-      if ('+-*/^!'.indexOf(c) >= 0) {
+      // 运算符（含 ' 求导后缀）
+      if ('+-*/^!\''.indexOf(c) >= 0) {
         tokens.push({ type: 'OP', value: c, text: c }); i++; continue;
       }
 
@@ -367,7 +372,8 @@
     return base;
   };
 
-  // postfix = primary ('!')*
+  // postfix = primary ( '!' | "'" )*
+  //   ! → 阶乘；' → 对前一项求数值导数 d/dx（如 (sin(x))' = cos(x)）
   Parser.prototype.parsePostfix = function () {
     let base = this.parsePrimary();
     for (;;) {
@@ -376,6 +382,10 @@
         this.next();
         const b = base;
         base = x => factorial(b(x));
+      } else if (t.type === 'OP' && t.value === "'") {
+        this.next();
+        const b = base;
+        base = x => diff(b, x);
       } else break;
     }
     return base;
@@ -391,7 +401,8 @@
     if (t.type === 'IDENT') {
       this.next();
       if (t.value === VAR) return x => x;
-      throw new ExprError(`未知标识符 “${t.value}”：本绘制器自变量仅支持 x。请检查拼写，或用 * 连接，例如 x*sin(x)。`);
+      if (t.value === 'y') return () => __y; // 第二变量（隐式方程 F(x,y) 用）
+      throw new ExprError(`未知标识符 “${t.value}”：自变量支持 x（及 y 用于隐式方程）。请检查拼写，或用 * 连接，例如 x*sin(x)。`);
     }
     if (t.type === 'LPAREN') {
       this.next();
@@ -474,7 +485,8 @@
     if (t.type === 'IDENT') {
       this.next();
       if (t.value === VAR) return x => x;
-      throw new ExprError(`未知标识符 “${t.value}”：自变量仅支持 x`);
+      if (t.value === 'y') return () => __y;
+      throw new ExprError(`未知标识符 “${t.value}”：自变量仅支持 x/y`);
     }
     if (t.type === 'LPAREN') {
       this.next(); const e = this.parseExpr(); this.expect('RPAREN'); return e;
@@ -519,10 +531,27 @@
     return r;
   }
 
+  // 数值导数 d/dx：中心差分。h 按尺度自适应，避免除零/精度问题
+  function diff(f, x) {
+    const ax = Math.abs(x);
+    const h = ax > 1 ? ax * 1e-6 : 1e-6;
+    let y1, y2;
+    try { y1 = f(x - h); } catch (e) { y1 = NaN; }
+    try { y2 = f(x + h); } catch (e) { y2 = NaN; }
+    if (!isFinite(y1) || !isFinite(y2)) {
+      // 退回单侧差分
+      let y0; try { y0 = f(x); } catch (e) { y0 = NaN; }
+      if (isFinite(y0) && isFinite(y2)) return (y2 - y0) / h;
+      if (isFinite(y0) && isFinite(y1)) return (y0 - y1) / h;
+      return NaN;
+    }
+    return (y2 - y1) / (2 * h);
+  }
+
   /* ============================================================
    * 4. 对外 API：analyze(input)
    *    返回 { ok, kind, fn?, xVal?, normalized, corrections, error }
-   *    kind: 'function' (y=f(x)) | 'vertical' (x=常数 → 竖直直线)
+   *    kind: 'function' (y=f(x)) | 'vertical' (x=常数) | 'implicit' (F(x,y)=0，如圆锥曲线)
    * ============================================================ */
   function analyze(input) {
     let normalized, fixes;
@@ -540,39 +569,65 @@
     }
 
     // 识别顶层  x = ...  或  y = ...  形式
-    //   x = c   → 竖直直线 x = c（c 为常数表达式）
-    //   y = f   → 等价于 f(x)
+    //   x = c   → 竖直直线 x = c（c 为常数表达式，不含 x/y）
+    //   y = f   → 等价于 f(x)（f 不含 y）
+    //   含 y 的方程（如 x^2+y^2=1、y=x^2 中的 y 在右侧也算）落到下方隐式分支
     const head0 = tokens[0];
     const head1 = tokens[1];
     if (head0 && head0.type === 'IDENT' && head1 && head1.type === 'EQ' &&
       (head0.value === 'x' || head0.value === 'y')) {
       const isVertical = head0.value === 'x';
-      // RHS token 序列（去掉前两个 + 末尾 EOF 后重新加 EOF）
       const rhs = tokens.slice(2, tokens.length - 1);
       if (rhs.length === 0) {
         return { ok: false, error: `${head0.value}= 后缺少表达式`, normalized, corrections: buildCorrections(found, fixes) };
       }
-      // x= 的右边必须是常数（不含变量 x）
-      if (isVertical && rhs.some(tk => tk.type === 'IDENT' && tk.value === VAR)) {
-        return { ok: false, error: `x= 右侧应为常数，例如 x=2、x=pi`, normalized, corrections: buildCorrections(found, fixes) };
-      }
-      try {
-        const rhsTok = rhs.concat([{ type: 'EOF', value: null, text: '' }]);
-        const fn = new Parser(rhsTok).parse();
-        if (isVertical) {
-          const xVal = fn(0); // RHS 为常数
-          if (!isFinite(xVal)) throw new ExprError('x= 右侧不是有效常数');
-          return { ok: true, kind: 'vertical', xVal, normalized, corrections: buildCorrections(found, fixes), error: null };
+      // RHS 含 y（或 x 在 x= 右侧）→ 交给下方隐式/方程分支
+      const rhsHasY = rhs.some(tk => tk.type === 'IDENT' && tk.value === 'y');
+      if (rhsHasY || (isVertical && rhs.some(tk => tk.type === 'IDENT' && tk.value === VAR))) {
+        // 落到下方一般方程处理
+      } else {
+        try {
+          const rhsTok = rhs.concat([{ type: 'EOF', value: null, text: '' }]);
+          const fn = new Parser(rhsTok).parse();
+          if (isVertical) {
+            const xVal = fn(0); // RHS 为常数
+            if (!isFinite(xVal)) throw new ExprError('x= 右侧不是有效常数');
+            return { ok: true, kind: 'vertical', xVal, normalized, corrections: buildCorrections(found, fixes), error: null };
+          }
+          return { ok: true, kind: 'function', fn, normalized, corrections: buildCorrections(found, fixes), error: null };
+        } catch (e) {
+          return { ok: false, error: e.message || String(e), normalized, corrections: buildCorrections(found, fixes) };
         }
-        return { ok: true, kind: 'function', fn, normalized, corrections: buildCorrections(found, fixes), error: null };
-      } catch (e) {
-        return { ok: false, error: e.message || String(e), normalized, corrections: buildCorrections(found, fixes) };
       }
     }
 
-    // 其它位置出现 = 视为不支持
-    if (tokens.some(tk => tk.type === 'EQ')) {
-      return { ok: false, error: '暂仅支持 x=常数（竖直直线）或 y=表达式；无法解析此处的 “=”', normalized, corrections: buildCorrections(found, fixes) };
+    // 一般方程 LHS = RHS：化为 F(x,y) = LHS - RHS = 0
+    //   若 F 含 y → 隐式曲线（圆锥曲线等），绘制零等高线
+    //   若 F 不含 y：x=常数 → 竖直直线（已处理）；y=g(x) → 函数；x^2=4 → 两竖直线等
+    const eqIdx = tokens.findIndex(tk => tk.type === 'EQ');
+    if (eqIdx >= 0) {
+      const lhs = tokens.slice(0, eqIdx);
+      const rhs = tokens.slice(eqIdx + 1, tokens.length - 1); // 去掉末尾 EOF
+      if (lhs.length === 0 || rhs.length === 0) {
+        return { ok: false, error: '“=”两侧都需要表达式', normalized, corrections: buildCorrections(found, fixes) };
+      }
+      // 构造 F = LHS - RHS 的 token 序列：LHS + '-' + RHS + EOF
+      const fTok = lhs.concat([{ type: 'OP', value: '-', text: '-' }], rhs, [{ type: 'EOF', value: null, text: '' }]);
+      const hasY = fTok.some(tk => tk.type === 'IDENT' && tk.value === 'y');
+      try {
+        const f = new Parser(fTok).parse();
+        if (hasY) {
+          // 隐式：F(x,y)=0
+          const impl = (x, y) => { __y = y; return f(x); };
+          return { ok: true, kind: 'implicit', fn: impl, normalized, corrections: buildCorrections(found, fixes), error: null };
+        }
+        // 不含 y：可能是 x=常数（竖直）或 y=g(x)（函数），按首标识符判定
+        const firstIdent = lhs.find(tk => tk.type === 'IDENT');
+        // 注：纯 LHS-RHS 不含 y 时，重用上方 x=/y= 逻辑已覆盖；此处兜底解析为函数
+        return { ok: true, kind: 'function', fn: f, normalized, corrections: buildCorrections(found, fixes), error: null };
+      } catch (e) {
+        return { ok: false, error: e.message || String(e), normalized, corrections: buildCorrections(found, fixes) };
+      }
     }
 
     let fn;

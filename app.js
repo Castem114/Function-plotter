@@ -168,6 +168,7 @@
           ctx.restore();
           continue;
         }
+        if (f.kind === 'implicit') { this.drawImplicit(ctx, f); continue; }
         if (!f.fn) continue;
         ctx.save(); ctx.strokeStyle = f.color; ctx.lineWidth = 2.2; ctx.lineJoin = 'round';
         ctx.beginPath();
@@ -183,6 +184,55 @@
         }
         ctx.stroke(); ctx.restore();
       }
+    }
+
+    /* ---- 隐式曲线 F(x,y)=0：Marching Squares ---- */
+    drawImplicit(ctx, f) {
+      if (!f.fn) return;
+      const GX = Math.max(Math.round(this.width / 6), 60);
+      const GY = Math.max(Math.round(this.height / 6), 60);
+      const xMin = this.xMin, xMax = this.xMax, yMin = this.yMin, yMax = this.yMax;
+      const dx = (xMax - xMin) / GX, dy = (yMax - yMin) / GY;
+      const F = (i, j) => { const x = xMin + i * dx, y = yMax - j * dy; try { return f.fn(x, y); } catch (e) { return NaN; } };
+      const grid = new Float32Array((GX + 1) * (GY + 1));
+      for (let j = 0; j <= GY; j++) for (let i = 0; i <= GX; i++) grid[j * (GX + 1) + i] = F(i, j);
+      const at = (i, j) => grid[j * (GX + 1) + i];
+      ctx.save();
+      ctx.strokeStyle = f.color; ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+      ctx.beginPath();
+      for (let j = 0; j < GY; j++) {
+        for (let i = 0; i < GX; i++) {
+          const tl = at(i, j), tr = at(i + 1, j), br = at(i + 1, j + 1), bl = at(i, j + 1);
+          if (!isFinite(tl) || !isFinite(tr) || !isFinite(br) || !isFinite(bl)) continue;
+          const x0 = xMin + i * dx, x1 = x0 + dx;
+          const y0 = yMax - j * dy, y1 = y0 - dy;
+          const lerp = (a, b, va, vb) => (vb === va) ? null : a + (b - a) * (0 - va) / (vb - va);
+          const top = lerp(x0, x1, tl, tr); const right = lerp(y0, y1, tr, br);
+          const bottom = lerp(x0, x1, bl, br); const left = lerp(y0, y1, tl, bl);
+          let code = 0; if (tl > 0) code |= 8; if (tr > 0) code |= 4; if (br > 0) code |= 2; if (bl > 0) code |= 1;
+          // 边上的零点坐标 [x,y]（已线性插值）
+          const E = { top: top != null ? [top, y0] : null, right: right != null ? [x1, right] : null, bottom: bottom != null ? [bottom, y1] : null, left: left != null ? [x0, left] : null };
+          let pairs;
+          switch (code) {
+            case 1: case 14: pairs = [[E.bottom, E.left]]; break;
+            case 2: case 13: pairs = [[E.bottom, E.right]]; break;
+            case 3: case 12: pairs = [[E.left, E.right]]; break;
+            case 4: case 11: pairs = [[E.top, E.right]]; break;
+            case 6: case 9: pairs = [[E.top, E.bottom]]; break;
+            case 7: case 8: pairs = [[E.top, E.left]]; break;
+            case 5: pairs = [[E.top, E.right], [E.bottom, E.left]]; break; // 鞍点
+            case 10: pairs = [[E.top, E.left], [E.bottom, E.right]]; break; // 鞍点
+            default: pairs = [];
+          }
+          for (const [p1, p2] of pairs) {
+            if (!p1 || !p2) continue;
+            ctx.moveTo(this.px(p1[0]), this.py(p1[1]));
+            ctx.lineTo(this.px(p2[0]), this.py(p2[1]));
+          }
+        }
+      }
+      ctx.stroke();
+      ctx.restore();
     }
 
     /* ---- 特殊点检测（零点 / 极值 / 与其它图像交点）---- */
@@ -418,6 +468,8 @@
           if (f.xVal == null || !isFinite(f.xVal)) continue;
           const d = Math.abs(this.px(f.xVal) - px);
           if (d < bestPtD) { bestPtD = d; bestPt = { x: f.xVal, y: cy, color: f.color, label: f.label }; }
+        } else if (f.kind === 'implicit') {
+          continue; // 隐式曲线不参与“最近点”悬停
         } else if (f.fn) {
           let y; try { y = f.fn(cx); } catch (e) { y = NaN; }
           if (!isFinite(y)) continue;
@@ -465,6 +517,7 @@
       for (const f of this.functions) {
         if (!f.visible) continue;
         if (f.kind === 'vertical') { const d = Math.abs(this.px(f.xVal) - px); if (d < bestPtD) { bestPtD = d; bestPt = { x: f.xVal, y: cy, color: f.color, label: f.label }; } }
+        else if (f.kind === 'implicit') { continue; }
         else if (f.fn) { let y; try { y = f.fn(cx); } catch (e) { y = NaN; } if (!isFinite(y)) continue; const d = Math.abs(this.py(y) - py); if (d < bestPtD) { bestPtD = d; bestPt = { x: cx, y, color: f.color, label: f.label }; } }
       }
       if (bestPt) this.togglePin({ x: bestPt.x, y: bestPt.y, type: 'point', color: bestPt.color, label: bestPt.label });
@@ -727,6 +780,7 @@
       <span class="swatch" style="background:${color}"></span>
       <button class="vis" title="显示/隐藏">●</button>
       <div class="fn-input" contenteditable="true" spellcheck="false" data-ph="如 sin(x)、ln2x、x=2"></div>
+      <button class="diff" title="求导 d/dx">d/dx</button>
       <button class="del" title="删除">✕</button>
       <div class="corr"></div>
       <div class="err"></div>
@@ -737,6 +791,7 @@
     const corrEl = li.querySelector('.corr');
     const visBtn = li.querySelector('.vis');
     const delBtn = li.querySelector('.del');
+    const diffBtn = li.querySelector('.diff');
     const rec = { element: li, input, errEl, corrEl, color, visible, fn: null, kind: 'function', xVal: null };
     rows.set(id, rec);
     renderMathValue(input, expr);
@@ -772,6 +827,15 @@
     });
     visBtn.addEventListener('click', () => { rec.visible = !rec.visible; visBtn.classList.toggle('off', !rec.visible); syncFunctions(); });
     delBtn.addEventListener('click', () => { if (rows.size === 1) { renderMathValue(input, ''); compile(id); return; } rows.delete(id); li.remove(); syncFunctions(); });
+    // 求导：把当前表达式包成 (...)' —— 即对其求 d/dx
+    diffBtn.addEventListener('click', () => {
+      const raw = serializeMath(input).trim();
+      if (!raw) return;
+      const wrapped = '(' + raw + ")'";
+      renderMathValue(input, wrapped);
+      placeCaretAtEnd(input);
+      compile(id);
+    });
     compile(id);
     return id;
   }
@@ -800,6 +864,7 @@
     for (const rec of rows.values()) {
       const entry = { color: rec.color, visible: rec.visible, kind: rec.kind };
       if (rec.kind === 'vertical') { entry.xVal = rec.xVal; entry.label = 'x=' + plotter.fmt(rec.xVal); }
+      else if (rec.kind === 'implicit') { entry.fn = rec.fn; entry.label = '隐式'; }
       else { entry.fn = rec.fn; entry.label = 'f' + sub(fi + 1); fi++; }
       fs.push(entry);
     }
@@ -818,6 +883,8 @@
       if (!rec.visible) continue;
       if (rec.kind === 'vertical') {
         html += `<span class="ro-fn"><i style="background:${rec.color}"></i>x=${plotter.fmt(rec.xVal)}</span>`;
+      } else if (rec.kind === 'implicit') {
+        html += `<span class="ro-fn"><i style="background:${rec.color}"></i>隐式</span>`;
       } else if (rec.fn) {
         let y; try { y = rec.fn(c.x); } catch (e) { y = NaN; }
         const ys = isFinite(y) ? plotter.fmt(y) : '—';
