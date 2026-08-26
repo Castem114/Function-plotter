@@ -266,11 +266,12 @@
       const xMin = this.xMin, xMax = this.xMax, yMin = this.yMin, yMax = this.yMax;
       const xs = new Array(N + 1);
       for (let k = 0; k <= N; k++) xs[k] = xMin + (k / N) * (xMax - xMin);
-      const funcIdx = [], verts = [];
+      const funcIdx = [], verts = [], implIdx = [];
       for (let i = 0; i < fs.length; i++) {
         if (!fs[i].visible) continue;
         if (fs[i].kind === 'vertical') { if (isFinite(fs[i].xVal)) verts.push(i); }
         else if (fs[i].kind === 'function' && fs[i].fn) funcIdx.push(i);
+        else if (fs[i].kind === 'implicit' && fs[i].fn) implIdx.push(i);
       }
       const ev = (i, x) => { try { return fs[i].fn(x); } catch (e) { return NaN; } };
       const Y = funcIdx.map(i => xs.map(x => ev(i, x)));
@@ -338,6 +339,41 @@
         const y = ev(i, c);
         if (inViewY(y)) push({ type: 'inter', x: c, y, i, j: vi, v: true });
       }
+      // 隐式曲线 F(x,y)=0 的特殊点：与坐标轴、其它函数、竖直线的交点
+      const impl = (ii, x, y) => { try { return fs[ii].fn(x, y); } catch (e) { return NaN; } };
+      const ys = new Array(N + 1);
+      for (let k = 0; k <= N; k++) ys[k] = yMin + (k / N) * (yMax - yMin);
+      for (const ii of implIdx) {
+        // 与 x 轴交点：F(x,0)=0
+        for (let k = 0; k < N; k++) {
+          const ga = impl(ii, xs[k], 0), gb = impl(ii, xs[k + 1], 0);
+          if (!isFinite(ga) || !isFinite(gb) || (Math.abs(ga) < 1e-9 && Math.abs(gb) < 1e-9)) continue;
+          if (ga * gb <= 0) { const r = this.bisect(x => impl(ii, x, 0), xs[k], xs[k + 1]); if (r != null && r >= xMin && r <= xMax) push({ type: 'inter', x: r, y: 0, i: ii, axis: 'x' }); }
+        }
+        // 与 y 轴交点：F(0,y)=0
+        for (let k = 0; k < N; k++) {
+          const ga = impl(ii, 0, ys[k]), gb = impl(ii, 0, ys[k + 1]);
+          if (!isFinite(ga) || !isFinite(gb) || (Math.abs(ga) < 1e-9 && Math.abs(gb) < 1e-9)) continue;
+          if (ga * gb <= 0) { const r = this.bisect(y => impl(ii, 0, y), ys[k], ys[k + 1]); if (r != null && r >= yMin && r <= yMax) push({ type: 'inter', x: 0, y: r, i: ii, axis: 'y' }); }
+        }
+        // 与其它函数 g(x) 交点：F(x, g(x))=0
+        for (const fi of funcIdx) {
+          for (let k = 0; k < N; k++) {
+            const ga = impl(ii, xs[k], ev(fi, xs[k])), gb = impl(ii, xs[k + 1], ev(fi, xs[k + 1]));
+            if (!isFinite(ga) || !isFinite(gb) || (Math.abs(ga) < 1e-9 && Math.abs(gb) < 1e-9)) continue;
+            if (ga * gb <= 0) { const r = this.bisect(x => impl(ii, x, ev(fi, x)), xs[k], xs[k + 1]); if (r != null) { const yy = ev(fi, r); if (inViewY(yy)) push({ type: 'inter', x: r, y: yy, i: ii, j: fi, implFunc: true }); } }
+          }
+        }
+        // 与竖直直线 x=c 交点：F(c, y)=0
+        for (const vi of verts) {
+          const c = fs[vi].xVal; if (c < xMin || c > xMax) continue;
+          for (let k = 0; k < N; k++) {
+            const ga = impl(ii, c, ys[k]), gb = impl(ii, c, ys[k + 1]);
+            if (!isFinite(ga) || !isFinite(gb) || (Math.abs(ga) < 1e-9 && Math.abs(gb) < 1e-9)) continue;
+            if (ga * gb <= 0) { const r = this.bisect(y => impl(ii, c, y), ys[k], ys[k + 1]); if (r != null && r >= yMin && r <= yMax) push({ type: 'inter', x: c, y: r, i: ii, j: vi, implVert: true }); }
+          }
+        }
+      }
       // 去重 + 限数
       const tol = (xMax - xMin) * 1.5e-4, toly = (yMax - yMin) * 1.5e-4;
       const out = [];
@@ -349,8 +385,10 @@
     }
 
     colorOf(p) {
-      if (p.type === 'inter') return '#495057';
+      // 隐式曲线的交点用其曲线颜色；函数交点用中性灰
       const f = this.functions[p.i];
+      if (f && f.kind === 'implicit') return f.color;
+      if (p.type === 'inter') return '#495057';
       return f ? f.color : '#495057';
     }
 
@@ -485,6 +523,9 @@
 
     specialLabel(p) {
       const f = this.functions[p.i];
+      // 隐式曲线与坐标轴交点
+      if (p.type === 'inter' && p.axis === 'x') return (f ? f.label : '?') + '∩x轴';
+      if (p.type === 'inter' && p.axis === 'y') return (f ? f.label : '?') + '∩y轴';
       if (p.type === 'inter' && p.j != null) {
         const g = this.functions[p.j];
         const la = f ? f.label : '?';
@@ -629,30 +670,33 @@
     return s;
   }
   function matchParen(raw, start) { let d = 0, j = start; for (; j < raw.length; j++) { if (raw[j] === '(') d++; else if (raw[j] === ')') { d--; if (d === 0) { j++; break; } } } return j; }
-  // 上标指数的“贪婪”范围：从 ^ 之后起，一直吃到 退出标记(→插入) / 字符串末尾 / 未配对的 ) 为止。
-  //   注意：+ - * / 空白 等分隔符【不会】结束指数——只有按 → 才退出回基线。
-  //   因此 2^2x+1（不按 →）= 2^(2x+1)；括号 (…) 计入（配对），嵌套 ^ 计入。
+  // 上标指数的范围。eqMode（表达式含 =，即方程/隐式）时用标准法则：
+  //   指数到一个“项”为止（遇 + - * / 空白 = 或未配对 ) 即止），故 x^2+y^2 = x²+y²（圆锥曲线）。
+  // 否则（函数 y=f(x)）用“贪婪”法则：只有 → 退出标记 / 末尾 / 未配对 ) 才结束，
+  //   故 2^2x+1（不按 →）= 2^(2x+1)。
   const EXIT_MARK = '\uE000';
-  function exponentEnd(raw, start) {
-    let j = start;
-    let depth = 0;
+  function exponentEnd(raw, start, eqMode) {
+    let j = start, depth = 0;
     while (j < raw.length) {
       const c = raw[j];
-      if (c === EXIT_MARK) break;          // → 插入的退出标记
+      if (c === EXIT_MARK) break;
+      if (c === '=') break;                                  // 方程的 = 不属于指数
       if (c === '(') depth++;
-      else if (c === ')') { if (depth === 0) break; depth--; } // 顶层未配对的 ) 属于外层括号
+      else if (c === ')') { if (depth === 0) break; depth--; }
+      else if (depth === 0 && eqMode && (c === '+' || c === '-' || c === '*' || c === '/' || c === ' ')) break;
       j++;
     }
     return j;
   }
-  // 把“显示原文”转成“可解析原文”：每个 ^ 的贪婪指数用括号包起来，并剥离退出标记
+  // 把“显示原文”转成“可解析原文”：每个 ^ 的指数用括号包起来，并剥离退出标记
   function toCompileRaw(raw) {
+    const eqMode = raw.indexOf('=') >= 0;
     let out = '', i = 0;
     while (i < raw.length) {
       const c = raw[i];
       if (c === EXIT_MARK) { i++; continue; }
       if (c === '^') {
-        const end = exponentEnd(raw, i + 1);
+        const end = exponentEnd(raw, i + 1, eqMode);
         let inner = '';
         for (let k = i + 1; k < end; k++) if (raw[k] !== EXIT_MARK) inner += raw[k];
         out += '^(' + inner + ')';
@@ -662,19 +706,19 @@
     return out;
   }
   // 原始表达式 → DOM（含上标 sup）。空的 ^（如末尾待输）保留为字面字符，便于光标正常编辑
-  function buildMathDom(raw) {
+  function buildMathDom(raw, eqMode) {
+    if (eqMode === undefined) eqMode = raw.indexOf('=') >= 0;
     const frag = document.createDocumentFragment();
     let i = 0;
     while (i < raw.length) {
       if (raw[i] === '^') {
-        const end = exponentEnd(raw, i + 1);
+        const end = exponentEnd(raw, i + 1, eqMode);
         if (end <= i + 1) {
-          // 暂无指数内容：保留字面 ^，待输入指数后再包裹
           frag.appendChild(document.createTextNode('^'));
           i = i + 1;
         } else {
           const sup = document.createElement('SUP'); sup.className = SUP_CLASS;
-          sup.appendChild(buildMathDom(raw.slice(i + 1, end)));
+          sup.appendChild(buildMathDom(raw.slice(i + 1, end), eqMode));
           frag.appendChild(sup);
           i = end;
         }
@@ -827,14 +871,16 @@
     });
     visBtn.addEventListener('click', () => { rec.visible = !rec.visible; visBtn.classList.toggle('off', !rec.visible); syncFunctions(); });
     delBtn.addEventListener('click', () => { if (rows.size === 1) { renderMathValue(input, ''); compile(id); return; } rows.delete(id); li.remove(); syncFunctions(); });
-    // 求导：把当前表达式包成 (...)' —— 即对其求 d/dx
+    // 求导：把当前表达式包成 (...)' 作为【新函数行】，不修改原函数
     diffBtn.addEventListener('click', () => {
       const raw = serializeMath(input).trim();
       if (!raw) return;
       const wrapped = '(' + raw + ")'";
-      renderMathValue(input, wrapped);
-      placeCaretAtEnd(input);
-      compile(id);
+      const color = PALETTE[rows.size % PALETTE.length];
+      makeRow(wrapped, color);
+      // 滚动到新行
+      const last = els.list.lastElementChild;
+      if (last) last.scrollIntoView({ block: 'nearest' });
     });
     compile(id);
     return id;
