@@ -292,8 +292,8 @@
     const t = this.peek();
     if (!t || t.type !== type || (text !== undefined && t.value !== text)) {
       throw new ExprError(text != null
-        ? `此处需要 “${text}”，但得到 “${t ? t.text : '空'}”`
-        : `此处需要 ${type}，但得到 “${t ? t.text : '空'}”`);
+        ? `需要 ${text}，但得到 ${t ? t.text : '空'}`
+        : `需要 ${type}，但得到 “${t ? t.text : '空'}”`);
     }
     return this.next();
   };

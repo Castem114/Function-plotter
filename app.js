@@ -895,11 +895,7 @@
     if (!r.ok) { rec.fn = null; rec.kind = 'function'; rec.xVal = null; rec.errEl.textContent = '⚠ ' + r.error; }
     else {
       rec.fn = r.fn || null; rec.kind = r.kind; rec.xVal = r.xVal != null ? r.xVal : null;
-      if (r.corrections.length) {
-        rec.corrEl.innerHTML = r.corrections.map(c =>
-          `<span class="badge">${c.symbol ? `<b>${escapeHtml(c.symbol)}</b> → ` : ''}${escapeHtml(c.meaning)}</span>`
-        ).join('');
-      }
+
     }
     syncFunctions();
   }
@@ -996,9 +992,6 @@
   });
 
   /* ---- 初始化 ---- */
-  makeRow('sin(x)', PALETTE[0]);
-  makeRow('x^2 / 4 - 2', PALETTE[1]);
-  makeRow('ln(x)', PALETTE[2]);
 
   window.addEventListener('resize', () => plotter.resize());
   window.addEventListener('keydown', (e) => {
