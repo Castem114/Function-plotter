@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <title>函数绘制器 · Function Plotter</title>
+  <link rel="stylesheet" href="styles.css?v=9" />
+</head>
+<body>
+  <div class="app">
+    <!-- 侧栏 -->
+    <aside class="sidebar">
+      <header class="brand">
+        <div class="logo">ƒ</div>
+        <div>
+          <h1>函数绘制器</h1>
+          <p class="sub">输入函数 · 自动纠错 · 实时绘制</p>
+        </div>
+      </header>
+
+      <div class="toolbar">
+        <button id="add-fn" class="btn primary">＋ 添加函数</button>
+        <button id="reset-view" class="btn" title="重置视图 (0)">⟲ 重置</button>
+        <button id="zoom-in" class="btn" title="放大 (+)">＋镜</button>
+        <button id="zoom-out" class="btn" title="缩小 (−)">－镜</button>
+      </div>
+
+      <div id="fn-list" class="fn-list"></div>
+
+      <details class="examples" id="examples" open>
+        <summary>示例 · 点击载入</summary>
+        <div class="ex-grid">
+          <button class="ex" data-fn="sin(x)">sin(x)</button>
+          <button class="ex" data-fn="cos(2x) + sin(x)">cos(2x)+sin(x)</button>
+          <button class="ex" data-fn="x^2 - 3">x² − 3</button>
+          <button class="ex" data-fn="ln(x)">ln(x)</button>
+          <button class="ex" data-fn="log(x, 2)">log₂(x)</button>
+          <button class="ex" data-fn="sqrt(x)">√x</button>
+          <button class="ex" data-fn="e^x">eˣ</button>
+          <button class="ex" data-fn="1/x">1/x</button>
+          <button class="ex" data-fn="tan(x)">tan(x)</button>
+          <button class="ex" data-fn="abs(x) - 2">|x| − 2</button>
+          <button class="ex" data-fn="sin(pi x)">sin(πx)</button>
+          <button class="ex" data-fn="x^3 - 3x">x³ − 3x</button>
+          <button class="ex" data-fn="ln2x">ln2x（=ln(2x)）</button>
+          <button class="ex" data-fn="sinx cosx">sinx·cosx</button>
+          <button class="ex" data-fn="x=2">x=2（竖直线）</button>
+          <button class="ex" data-fn="x=pi/2">x=π/2</button>
+        </div>
+      </details>
+
+      <details class="help">
+        <summary>支持的符号 / 纠错</summary>
+        <ul class="help-list">
+          <li><code>ln(x)</code> 自然对数（自动识别 <code>ln</code>）</li>
+          <li><code>pi</code> 或 <code>π</code> → 圆周率 <code>π</code></li>
+          <li><code>e</code> → 自然常数 e；<code>exp(x)</code> = eˣ</li>
+          <li><code>sqrt(x)</code> 或 <code>√x</code> → 平方根</li>
+          <li><code>log(x)</code> 常用对数；<code>log(x, 2)</code> 指定底</li>
+          <li><code>sin cos tan sec csc cot</code> 及反/双曲函数</li>
+          <li><code>x^2</code>、<code>2x</code>（隐式乘法）、<code>x!</code> 阶乘</li>
+          <li><code>°</code> 自动转弧度：<code>sin(30°)</code></li>
+          <li>全角 <code>（）</code>、<code>，</code>、<code>×÷</code> 自动转半角</li>
+          <li><code>²³¹</code> 上标 → <code>^2 ^3 ^1</code></li>
+          <li>常量：<code>pi e tau phi inf</code>，希腊字母 <code>π τ ∞</code></li>
+        </ul>
+      </details>
+    </aside>
+
+    <!-- 绘图区 -->
+    <main class="stage">
+      <canvas id="plot"></canvas>
+      <div id="readout" class="readout"></div>
+      <div id="hoverbox" class="hoverbox"></div>
+      <div class="hint">拖动平移 · 滚轮缩放 · 点击特殊点钉选坐标</div>
+    </main>
+  </div>
+
+  <script src="expr.js?v=9"></script>
+  <script src="app.js?v=9"></script>
+</body>
+</html>
