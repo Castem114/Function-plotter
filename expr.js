@@ -69,6 +69,16 @@
   function setY(v) { __y = v; }
   function getY() { return __y; }
 
+  // 自由参数（如 a*sin(b*x) 中的 a、b）：通过全局槽在求值时注入当前滑块值
+  let __params = {};
+  function setParams(p) { __params = (p && typeof p === 'object') ? p : {}; }
+  function paramClosure(name) {
+    return () => {
+      const v = parseFloat(__params[name]);
+      return isFinite(v) ? v : NaN;
+    };
+  }
+
   // 关键字集合（用于词法分析的最长匹配与拆分）
   const KEYWORDS = new Set([
     ...Object.keys(FUNCS),
@@ -402,7 +412,7 @@
       this.next();
       if (t.value === VAR) return x => x;
       if (t.value === 'y') return () => __y; // 第二变量（隐式方程 F(x,y) 用）
-      throw new ExprError(`未知标识符 “${t.value}”：自变量支持 x（及 y 用于隐式方程）。请检查拼写，或用 * 连接，例如 x*sin(x)。`);
+      return paramClosure(t.value);          // 其余字母 → 自由参数（由滑块赋值）
     }
     if (t.type === 'LPAREN') {
       this.next();
@@ -486,7 +496,7 @@
       this.next();
       if (t.value === VAR) return x => x;
       if (t.value === 'y') return () => __y;
-      throw new ExprError(`未知标识符 “${t.value}”：自变量仅支持 x/y`);
+      return paramClosure(t.value); // 自由参数
     }
     if (t.type === 'LPAREN') {
       this.next(); const e = this.parseExpr(); this.expect('RPAREN'); return e;
@@ -568,6 +578,9 @@
       return { ok: false, error: e.message || String(e), normalized, corrections: buildCorrections(found, fixes) };
     }
 
+    // 收集自由参数名（首次出现顺序）：非 x/y 的标识符
+    const paramNames = collectParams(tokens);
+
     // 识别顶层  x = ...  或  y = ...  形式
     //   x = c   → 竖直直线 x = c（c 为常数表达式，不含 x/y）
     //   y = f   → 等价于 f(x)（f 不含 y）
@@ -590,11 +603,15 @@
           const rhsTok = rhs.concat([{ type: 'EOF', value: null, text: '' }]);
           const fn = new Parser(rhsTok).parse();
           if (isVertical) {
+            if (paramNames.length) {
+              // RHS 含参数（如 x=a*k）→ 动态竖直线：x 值随滑块实时变化
+              return { ok: true, kind: 'vertical', dynX: true, fn, params: paramNames, normalized, corrections: buildCorrections(found, fixes), error: null };
+            }
             const xVal = fn(0); // RHS 为常数
             if (!isFinite(xVal)) throw new ExprError('x= 右侧不是有效常数');
             return { ok: true, kind: 'vertical', xVal, normalized, corrections: buildCorrections(found, fixes), error: null };
           }
-          return { ok: true, kind: 'function', fn, normalized, corrections: buildCorrections(found, fixes), error: null };
+          return { ok: true, kind: 'function', fn, params: paramNames, normalized, corrections: buildCorrections(found, fixes), error: null };
         } catch (e) {
           return { ok: false, error: e.message || String(e), normalized, corrections: buildCorrections(found, fixes) };
         }
@@ -619,12 +636,11 @@
         if (hasY) {
           // 隐式：F(x,y)=0
           const impl = (x, y) => { __y = y; return f(x); };
-          return { ok: true, kind: 'implicit', fn: impl, normalized, corrections: buildCorrections(found, fixes), error: null };
+          return { ok: true, kind: 'implicit', fn: impl, params: paramNames, normalized, corrections: buildCorrections(found, fixes), error: null };
         }
         // 不含 y：可能是 x=常数（竖直）或 y=g(x)（函数），按首标识符判定
-        const firstIdent = lhs.find(tk => tk.type === 'IDENT');
         // 注：纯 LHS-RHS 不含 y 时，重用上方 x=/y= 逻辑已覆盖；此处兜底解析为函数
-        return { ok: true, kind: 'function', fn: f, normalized, corrections: buildCorrections(found, fixes), error: null };
+        return { ok: true, kind: 'function', fn: f, params: paramNames, normalized, corrections: buildCorrections(found, fixes), error: null };
       } catch (e) {
         return { ok: false, error: e.message || String(e), normalized, corrections: buildCorrections(found, fixes) };
       }
@@ -636,7 +652,18 @@
     } catch (e) {
       return { ok: false, error: e.message || String(e), normalized, corrections: buildCorrections(found, fixes) };
     }
-    return { ok: true, kind: 'function', fn, normalized, corrections: buildCorrections(found, fixes), error: null };
+    return { ok: true, kind: 'function', fn, params: paramNames, normalized, corrections: buildCorrections(found, fixes), error: null };
+  }
+
+  // 收集表达式中的自由参数名（非 x/y 的标识符），按首次出现顺序去重
+  function collectParams(tokens) {
+    const names = [];
+    for (const t of tokens) {
+      if (t.type === 'IDENT' && t.value !== VAR && t.value !== 'y') {
+        if (!names.includes(t.value)) names.push(t.value);
+      }
+    }
+    return names;
   }
 
   function buildCorrections(found, fixes) {
@@ -656,5 +683,5 @@
   // 调试：返回标准化后的文本
   function normalizeText(input) { return normalize(input).text; }
 
-  global.Expr = { analyze, normalize: normalizeText, ExprError };
+  global.Expr = { analyze, normalize: normalizeText, setParams, ExprError };
 })(window);

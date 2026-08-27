@@ -828,15 +828,18 @@
       <button class="del" title="删除">✕</button>
       <div class="corr"></div>
       <div class="err"></div>
+      <div class="params"></div>
     `;
     els.list.appendChild(li);
     const input = li.querySelector('.fn-input');
     const errEl = li.querySelector('.err');
     const corrEl = li.querySelector('.corr');
+    const paramEl = li.querySelector('.params');
     const visBtn = li.querySelector('.vis');
     const delBtn = li.querySelector('.del');
     const diffBtn = li.querySelector('.diff');
-    const rec = { element: li, input, errEl, corrEl, color, visible, fn: null, kind: 'function', xVal: null };
+    const rec = { element: li, input, errEl, corrEl, paramEl, color, visible, fn: null, rawFn: null, kind: 'function', xVal: null,
+      params: null, pvals: {}, pranges: {}, dynX: false };
     rows.set(id, rec);
     renderMathValue(input, expr);
 
@@ -890,14 +893,113 @@
     const rec = rows.get(id);
     const text = toCompileRaw(serializeMath(rec.input)).trim();
     rec.errEl.textContent = ''; rec.corrEl.innerHTML = '';
-    if (!text) { rec.fn = null; rec.kind = 'function'; rec.xVal = null; syncFunctions(); return; }
+    if (!text) { rec.fn = null; rec.rawFn = null; rec.kind = 'function'; rec.xVal = null; rec.params = null; rec.dynX = false; updateParamPanel(rec); syncFunctions(); return; }
     const r = Expr.analyze(text);
-    if (!r.ok) { rec.fn = null; rec.kind = 'function'; rec.xVal = null; rec.errEl.textContent = '⚠ ' + r.error; }
+    if (!r.ok) { rec.fn = null; rec.rawFn = null; rec.kind = 'function'; rec.xVal = null; rec.params = null; rec.dynX = false; rec.errEl.textContent = '⚠ ' + r.error; updateParamPanel(rec); }
     else {
-      rec.fn = r.fn || null; rec.kind = r.kind; rec.xVal = r.xVal != null ? r.xVal : null;
-
+      rec.rawFn = r.fn || null; rec.kind = r.kind;
+      if (r.kind === 'vertical') {
+        rec.dynX = !!r.dynX;
+        rec.xVal = r.dynX ? null : (r.xVal != null ? r.xVal : null);
+      } else { rec.dynX = false; rec.xVal = null; }
+      // 同步参数列表：保留仍在使用的旧值/旧范围，新参数给默认值
+      syncParamState(rec, r.params || []);
+      bindParams(rec);
+      updateParamPanel(rec);
     }
     syncFunctions();
+  }
+
+  /* ---------- 参数滑块 ---------- */
+  function syncParamState(rec, names) {
+    const hasParams = names && names.length > 0;
+    const oldVals = rec.pvals || {};
+    const oldRanges = rec.pranges || {};
+    rec.pvals = {}; rec.pranges = {};
+    if (!hasParams) { rec.params = null; return; }
+    rec.params = names.slice();
+    names.forEach(n => {
+      const ov = oldVals[n];
+      rec.pvals[n] = (typeof ov === 'number' && isFinite(ov)) ? ov : 1;
+      const or_ = oldRanges[n];
+      rec.pranges[n] = (or_ && isFinite(or_.min) && isFinite(or_.max)) ? or_ : { min: -10, max: 10 };
+    });
+  }
+  // 把参数闭包与当前值绑定：绘图时求值前把该行的参数注入全局槽
+  function bindParams(rec) {
+    if (!rec.rawFn) { rec.fn = null; return; }
+    if (!rec.params) { rec.fn = rec.rawFn; return; }
+    const vals = rec.pvals;
+    const g = rec.rawFn;
+    if (rec.kind === 'implicit') {
+      rec.fn = (x, y) => { Expr.setParams(vals); return g(x, y); };
+    } else {
+      rec.fn = (x) => { Expr.setParams(vals); return g(x); };
+    }
+  }
+  // 拖动滑块时的轻量节流重绘
+  let _livePending = false;
+  function liveDraw() {
+    if (_livePending) return;
+    _livePending = true;
+    requestAnimationFrame(() => { _livePending = false; syncFunctions(); });
+  }
+  function fmtP(v) {
+    if (!isFinite(v)) return '';
+    return (Math.round(v * 1000) / 1000).toString();
+  }
+  // 渲染该行下方的参数滑块区（含取值范围控制）
+  function updateParamPanel(rec) {
+    const box = rec.paramEl;
+    if (!box) return;
+    if (!rec.params || !rec.params.length) { box.classList.remove('on'); box.innerHTML = ''; return; }
+    box.classList.add('on');
+    box.innerHTML = rec.params.map(n => `
+      <div class="param-item" data-p="${escapeHtml(n)}">
+        <div class="p-line">
+          <b class="p-name">${escapeHtml(n)}</b>
+          <input class="p-slider" type="range" min="${rec.pranges[n].min}" max="${rec.pranges[n].max}" step="0.001" value="${rec.pvals[n]}">
+          <input class="p-val" type="number" step="any" value="${fmtP(rec.pvals[n])}">
+        </div>
+        <div class="p-range">
+          <span>范围</span>
+          <label>min <input class="p-min" type="number" step="any" value="${fmtP(rec.pranges[n].min)}"></label>
+          <span>–</span>
+          <label>max <input class="p-max" type="number" step="any" value="${fmtP(rec.pranges[n].max)}"></label>
+        </div>
+      </div>
+    `).join('');
+    box.querySelectorAll('.param-item').forEach(item => {
+      const p = item.getAttribute('data-p');
+      const slider = item.querySelector('.p-slider');
+      const valIn = item.querySelector('.p-val');
+      const minIn = item.querySelector('.p-min');
+      const maxIn = item.querySelector('.p-max');
+      const applyVal = (v) => {
+        if (!isFinite(v)) return;
+        rec.pvals[p] = v;
+        slider.value = v; valIn.value = fmtP(v);
+        liveDraw();
+      };
+      slider.addEventListener('input', () => applyVal(parseFloat(slider.value)));
+      valIn.addEventListener('input', () => applyVal(parseFloat(valIn.value)));
+      minIn.addEventListener('change', () => {
+        const mn = parseFloat(minIn.value), mx = parseFloat(maxIn.value);
+        if (!isFinite(mn)) { minIn.value = fmtP(rec.pranges[p].min); return; }
+        rec.pranges[p].min = Math.min(mn, isFinite(mx) ? mx : rec.pranges[p].max);
+        minIn.value = fmtP(rec.pranges[p].min);
+        slider.min = rec.pranges[p].min;
+        if (rec.pvals[p] < rec.pranges[p].min) applyVal(rec.pranges[p].min);
+      });
+      maxIn.addEventListener('change', () => {
+        const mx = parseFloat(maxIn.value), mn = parseFloat(minIn.value);
+        if (!isFinite(mx)) { maxIn.value = fmtP(rec.pranges[p].max); return; }
+        rec.pranges[p].max = Math.max(mx, isFinite(mn) ? mn : rec.pranges[p].min);
+        maxIn.value = fmtP(rec.pranges[p].max);
+        slider.max = rec.pranges[p].max;
+        if (rec.pvals[p] > rec.pranges[p].max) applyVal(rec.pranges[p].max);
+      });
+    });
   }
 
   function syncFunctions() {
@@ -905,7 +1007,10 @@
     let fi = 0;
     for (const rec of rows.values()) {
       const entry = { color: rec.color, visible: rec.visible, kind: rec.kind };
-      if (rec.kind === 'vertical') { entry.xVal = rec.xVal; entry.label = 'x=' + plotter.fmt(rec.xVal); }
+      if (rec.kind === 'vertical') {
+        if (rec.dynX && rec.fn) { try { rec.xVal = rec.fn(0); } catch (e) { rec.xVal = NaN; } } // 含参数的竖直线：按当前滑块值实时计算
+        entry.xVal = rec.xVal; entry.label = 'x=' + plotter.fmt(rec.xVal);
+      }
       else if (rec.kind === 'implicit') { entry.fn = rec.fn; entry.label = '隐式'; }
       else { entry.fn = rec.fn; entry.label = 'f' + sub(fi + 1); fi++; }
       fs.push(entry);
@@ -979,17 +1084,6 @@
   els.resetBtn.addEventListener('click', () => plotter.reset());
   els.zoomIn.addEventListener('click', () => plotter.zoom(1.4));
   els.zoomOut.addEventListener('click', () => plotter.zoom(1 / 1.4));
-  els.examples.addEventListener('click', (e) => {
-    const btn = e.target.closest('.ex'); if (!btn) return;
-    const text = btn.getAttribute('data-fn');
-    let target = null;
-    for (const rec of rows.values()) { if (!serializeMath(rec.input).trim()) { target = rec; break; } }
-    if (!target) { const color = PALETTE[rows.size % PALETTE.length]; const id = makeRow(text, color); target = rows.get(id); }
-    else {
-      const id = [...rows.entries()].find(([, r]) => r === target)[0];
-      renderMathValue(target.input, text); placeCaretAtEnd(target.input); compile(id);
-    }
-  });
 
   /* ---- 初始化 ---- */
 
@@ -1009,4 +1103,5 @@
   });
 
   window.__plotter = plotter;
+  window.__rows = rows; // 调试用：行记录（含参数值）
 })();
