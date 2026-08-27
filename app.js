@@ -285,7 +285,14 @@
         for (let k = 0; k < N; k++) {
           const ya = y[k], yb = y[k + 1];
           if (!isFinite(ya) || !isFinite(yb)) continue;
-          if (ya === 0) push({ type: 'zero', x: xs[k], y: 0, i });
+          if (ya === 0) {
+            // 仅当为孤立零点时标记：相邻样本不同时为 0
+            //   （避免 e^x / a^x 在左侧下溢为 0 的平台被误判成一串零点）
+            const yprev = k > 0 ? y[k - 1] : NaN;
+            const ynext = k < N ? y[k + 1] : NaN;
+            const plateau = (k > 0 && yprev === 0) || (k < N && ynext === 0);
+            if (!plateau) push({ type: 'zero', x: xs[k], y: 0, i });
+          }
           else if (ya * yb < 0) {
             const root = this.bisect(x => ev(i, x), xs[k], xs[k + 1]);
             if (root != null && root >= xMin && root <= xMax) push({ type: 'zero', x: root, y: 0, i });
@@ -648,6 +655,9 @@
     readout: document.getElementById('readout'),
     hoverbox: document.getElementById('hoverbox'),
     examples: document.getElementById('examples'),
+    exportBtn: document.getElementById('export-set'),
+    importBtn: document.getElementById('import-set'),
+    importFile: document.getElementById('import-file'),
   };
 
   const plotter = new Plotter(els.canvas);
@@ -1098,6 +1108,79 @@
   els.zoomIn.addEventListener('click', () => plotter.zoom(1.4));
   els.zoomOut.addEventListener('click', () => plotter.zoom(1 / 1.4));
 
+  /* ---- 导出 / 导入函数集 ---- */
+  // 导出：当前所有函数（表达式、颜色、可见性）+ 钉选点 + 视图范围 → JSON 文件下载
+  els.exportBtn.addEventListener('click', () => {
+    const data = {
+      app: 'function-plotter',
+      version: 1,
+      view: { xMin: plotter.xMin, xMax: plotter.xMax, yMin: plotter.yMin, yMax: plotter.yMax },
+      functions: [...rows.values()].map(r => ({
+        expr: serializeMath(r.input),
+        color: r.color,
+        visible: r.visible,
+        params: r.params ? r.params.map(n => ({ name: n, value: r.pvals[n], min: r.pranges[n].min, max: r.pranges[n].max })) : null,
+      })),
+      pins: plotter.pinned.map(p => ({ x: p.x, y: p.y, type: p.type, color: p.color, label: p.label })),
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'functions.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
+
+  // 导入：读取 JSON，清空当前行，重建函数行 + 钉选点 + 视图
+  els.importBtn.addEventListener('click', () => els.importFile.click());
+  els.importFile.addEventListener('change', (e) => {
+    const file = e.target.files && e.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(String(reader.result));
+        if (!data || !Array.isArray(data.functions)) throw new Error('JSON 中缺少 functions 数组');
+        // 清空当前所有行
+        for (const rec of rows.values()) rec.element.remove();
+        rows.clear(); rowSeq = 0;
+        // 重建函数行
+        (data.functions.length ? data.functions : [{ expr: '', color: PALETTE[0], visible: true }]).forEach(f => {
+          const id = makeRow(f.expr || '', f.color || PALETTE[rows.size % PALETTE.length], f.visible !== false);
+          const rec = rows.get(id);
+          // 恢复参数值与范围（若有）
+          if (rec.params && f.params) {
+            for (const pp of f.params) {
+              if (rec.pvals.hasOwnProperty(pp.name)) {
+                if (typeof pp.value === 'number') rec.pvals[pp.name] = pp.value;
+                if (isFinite(pp.min) && isFinite(pp.max)) rec.pranges[pp.name] = { min: pp.min, max: pp.max };
+              }
+            }
+            bindParams(rec); updateParamPanel(rec);
+          }
+        });
+        syncFunctions();
+        // 恢复钉选点
+        if (Array.isArray(data.pins)) {
+          plotter.pinned = data.pins
+            .filter(p => p && isFinite(p.x) && isFinite(p.y))
+            .slice(0, 12)
+            .map(p => ({ x: +p.x, y: +p.y, type: p.type || 'point', color: p.color || '#1f2933', label: p.label || '' }));
+          plotter.onPinsChange && plotter.onPinsChange();
+        }
+        // 恢复视图范围
+        if (data.view && isFinite(data.view.xMin) && isFinite(data.view.xMax)) {
+          plotter.setView(data.view.xMin, data.view.xMax, data.view.yMin, data.view.yMax);
+        } else {
+          plotter.draw();
+        }
+      } catch (err) {
+        alert('导入失败：' + (err.message || err));
+      }
+      els.importFile.value = ''; // 允许再次选择同一文件
+    };
+    reader.readAsText(file);
+  });
+
   /* ---- 初始化 ---- */
 
   window.addEventListener('resize', () => plotter.resize());
@@ -1117,4 +1200,5 @@
 
   window.__plotter = plotter;
   window.__rows = rows; // 调试用：行记录（含参数值）
+  window.__serializeMath = serializeMath; // 调试用：DOM→原始表达式
 })();
