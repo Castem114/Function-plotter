@@ -27,6 +27,8 @@
       this.special = [];       // 特殊点
       this.pinned = [];        // 用户钉选
       this._specialSig = null;
+      this.snap = false;       // 吸附到整数坐标格
+      this.trigAxis = false;    // 三角坐标轴（x 刻度为 π 的倍数）
       this._bindEvents();
       this.resize();
     }
@@ -100,7 +102,8 @@
     }
 
     drawGrid(ctx) {
-      const xStep = this.niceStep(this.xMax - this.xMin, 12);
+      const trigX = this.trigAxis;
+      const xStep = trigX ? this.trigStep() : this.niceStep(this.xMax - this.xMin, 12);
       const yStep = this.niceStep(this.yMax - this.yMin, 8);
       ctx.save(); ctx.strokeStyle = '#eef1f4'; ctx.lineWidth = 1;
       const xSub = xStep / 5, ySub = yStep / 5;
@@ -114,6 +117,37 @@
       ctx.stroke(); ctx.restore();
       this._xStep = xStep; this._yStep = yStep;
     }
+    // 三角坐标轴：选一个 π/n 使得刻度数 ~8-12
+    trigStep() {
+      const range = this.xMax - this.xMin;
+      const piRange = range / Math.PI;
+      const rawN = piRange / 10;
+      const n = Math.pow(2, Math.round(Math.log2(rawN)));
+      return Math.PI / Math.max(1, Math.min(n, 32));
+    }
+    // 把 x 值格式化为 π 的倍数字符串
+    fmtPi(x) {
+      if (Math.abs(x) < 1e-9) return '0';
+      const r = x / Math.PI;
+      const fr = Math.abs(r);
+      const sign = x < 0 ? '-' : '';
+      if (Math.abs(fr - Math.round(fr)) < 1e-9) {
+        const n = Math.round(fr);
+        return n === 0 ? '0' : sign + (n === 1 ? '\u03c0' : n + '\u03c0');
+      }
+      const denoms = [2, 3, 4, 6, 8, 12];
+      for (const d of denoms) {
+        const num = Math.round(fr * d);
+        if (Math.abs(fr - num / d) < 1e-9 && num > 0) {
+          const g = this._gcd(num, d);
+          const n2 = num / g, d2 = d / g;
+          if (d2 === 1) return sign + (n2 === 1 ? '\u03c0' : n2 + '\u03c0');
+          return sign + (n2 === 1 ? '' : n2) + '\u03c0/' + d2;
+        }
+      }
+      return this.fmt(x);
+    }
+    _gcd(a, b) { a = Math.abs(a); b = Math.abs(b); while (b) { [a, b] = [b, a % b]; } return a || 1; }
     drawAxes(ctx) {
       const x0 = this.px(0), y0 = this.py(0);
       ctx.save(); ctx.strokeStyle = '#495057'; ctx.fillStyle = '#495057';
@@ -129,11 +163,12 @@
       this.arrow(ctx, xLine, 1, xLine - 5, 9);
       this.arrow(ctx, xLine, 1, xLine + 5, 9);
       const xStep = this._xStep, yStep = this._yStep;
+      const trigX = this.trigAxis;
       ctx.textBaseline = 'top'; ctx.textAlign = 'center';
       for (let x = Math.ceil(this.xMin / xStep) * xStep; x <= this.xMax; x += xStep) {
         if (Math.abs(x) < xStep / 2) continue;
         const X = this.px(x); ctx.beginPath(); ctx.moveTo(X, yLine - 3); ctx.lineTo(X, yLine + 3); ctx.stroke();
-        ctx.fillText(this.fmt(x), X, Math.min(yLine + 5, this.height - 14));
+        ctx.fillText(trigX ? this.fmtPi(x) : this.fmt(x), X, Math.min(yLine + 5, this.height - 14));
       }
       ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
       for (let y = Math.ceil(this.yMin / yStep) * yStep; y <= this.yMax; y += yStep) {
@@ -517,7 +552,9 @@
 
     /* ---- 鼠标位置 → 最近的曲线点 / 特殊点 ---- */
     updateHoverFromPx(px, py) {
-      const cx = this.mx(px), cy = this.my(py);
+      let cx = this.mx(px), cy = this.my(py);
+      // 吸附：把鼠标坐标四舍五入到整数格
+      if (this.snap) { cx = Math.round(cx); cy = Math.round(cy); }
       const h = { cursor: { x: cx, y: cy }, point: null, special: null };
       let bestSp = null, bestSpD = 14;
       for (const p of this.special) {
@@ -582,7 +619,9 @@
       if (bestSp) { this.togglePin({ x: bestSp.x, y: bestSp.y, type: bestSp.type, color: this.colorOf(bestSp), label: this.specialLabel(bestSp) }); return; }
       // 2) 否则：找最近的曲线/竖直直线点钉选
       let bestPt = null, bestPtD = 13;
-      const cx = this.mx(px), cy = this.my(py);
+      let cx = this.mx(px), cy = this.my(py);
+      // 吸附：钉选到整数坐标格
+      if (this.snap) { cx = Math.round(cx); cy = Math.round(cy); }
       for (const f of this.functions) {
         if (!f.visible) continue;
         if (f.kind === 'vertical') { const d = Math.abs(this.px(f.xVal) - px); if (d < bestPtD) { bestPtD = d; bestPt = { x: f.xVal, y: cy, color: f.color, label: f.label }; } }
@@ -679,6 +718,8 @@
     exportBtn: document.getElementById('export-set'),
     importBtn: document.getElementById('import-set'),
     importFile: document.getElementById('import-file'),
+    snapToggle: document.getElementById('snap-toggle'),
+    trigToggle: document.getElementById('trig-toggle'),
   };
 
   const plotter = new Plotter(els.canvas);
@@ -690,12 +731,37 @@
 
   /* ===================== 数学输入（contenteditable：^ → 上标指数，→ 恢复，pi → π） ===================== */
   const SUP_CLASS = 'math-exp';
-  // DOM → 原始表达式（sup 元素还原为 ^...；剥离零宽占位符）
+  const FN_BRACKET_CLASS = 'math-bracket';
+  // ceil/floor 的显示符号：ceil → ⎡ ⎤（向上取整），floor → ⎣ ⎦（向下取整）
+  const FN_BRACKETS = {
+    ceil: { open: '\u23A1', close: '\u23A4', data: 'ceil' }, // ⎡ ⎤
+    floor: { open: '\u23A3', close: '\u23A6', data: 'floor' }, // ⎣ ⎦
+  };
+  // 从 raw 的位置 i 开始，检查是否匹配 ceil( 或 floor(；返回函数名或 null
+  function matchFnBracket(raw, i) {
+    for (const name of ['ceil', 'floor']) {
+      if (raw.substr(i, name.length + 1) === name + '(') return name;
+    }
+    return null;
+  }
+  // DOM → 原始表达式（sup 元素还原为 ^...；math-bracket 还原为 ceil(...)/floor(...)；剥离零宽占位符）
   function serializeMath(node) {
+    if (node.nodeType === 3) return node.data.replace(/\u200b/g, '');
     let s = '';
     node.childNodes.forEach(ch => {
       if (ch.nodeType === 3) s += ch.data.replace(/\u200b/g, '');
       else if (ch.nodeName === 'SUP' || (ch.classList && ch.classList.contains(SUP_CLASS))) s += '^' + serializeMath(ch);
+      else if (ch.classList && ch.classList.contains(FN_BRACKET_CLASS)) {
+        const fn = ch.getAttribute('data-fn');
+        // 跳过首尾的括号字符文本节点，只序列化中间内容
+        let inner = '';
+        const kids = ch.childNodes;
+        for (let k = 0; k < kids.length; k++) {
+          if (k === 0 || k === kids.length - 1) continue; // 括号字符
+          inner += serializeMath(kids[k]);
+        }
+        s += fn + '(' + inner + ')';
+      }
       else s += serializeMath(ch);
     });
     return s;
@@ -736,12 +802,28 @@
     }
     return out;
   }
-  // 原始表达式 → DOM（含上标 sup）。空的 ^（如末尾待输）保留为字面字符，便于光标正常编辑
+  // 原始表达式 → DOM（含上标 sup、ceil/floor 取整括号）。空的 ^ 保留为字面字符
   function buildMathDom(raw, eqMode) {
     if (eqMode === undefined) eqMode = raw.indexOf('=') >= 0;
     const frag = document.createDocumentFragment();
     let i = 0;
     while (i < raw.length) {
+      // 1) ceil( / floor( → 取整括号 ⎡...⎤ / ⎣...⎦
+      const fnName = matchFnBracket(raw, i);
+      if (fnName) {
+        const parenStart = i + fnName.length; // '(' 的位置
+        const parenEnd = matchParen(raw, parenStart);
+        const inner = raw.slice(parenStart + 1, parenEnd - 1);
+        const bk = FN_BRACKETS[fnName];
+        const span = document.createElement('SPAN'); span.className = FN_BRACKET_CLASS; span.setAttribute('data-fn', bk.data);
+        span.appendChild(document.createTextNode(bk.open));
+        span.appendChild(buildMathDom(inner, eqMode));
+        span.appendChild(document.createTextNode(bk.close));
+        frag.appendChild(span);
+        i = parenEnd;
+        continue;
+      }
+      // 2) ^ → 上标
       if (raw[i] === '^') {
         const end = exponentEnd(raw, i + 1, eqMode);
         if (end <= i + 1) {
@@ -754,7 +836,7 @@
           i = end;
         }
       } else {
-        let j = i; while (j < raw.length && raw[j] !== '^') j++;
+        let j = i; while (j < raw.length && raw[j] !== '^' && !matchFnBracket(raw, j)) j++;
         frag.appendChild(document.createTextNode(raw.slice(i, j)));
         i = j;
       }
@@ -1128,6 +1210,10 @@
   els.resetBtn.addEventListener('click', () => plotter.reset());
   els.zoomIn.addEventListener('click', () => plotter.zoom(1.4));
   els.zoomOut.addEventListener('click', () => plotter.zoom(1 / 1.4));
+
+  /* ---- 吸附 / 三角坐标轴 开关 ---- */
+  els.snapToggle.addEventListener('change', () => { plotter.snap = els.snapToggle.checked; });
+  els.trigToggle.addEventListener('change', () => { plotter.trigAxis = els.trigToggle.checked; plotter.draw(); });
 
   /* ---- 导出 / 导入函数集 ---- */
   // 导出：当前所有函数（表达式、颜色、可见性）+ 钉选点 + 视图范围 → JSON 文件下载

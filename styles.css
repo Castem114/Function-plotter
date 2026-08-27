@@ -84,9 +84,22 @@ body {
 /* 导入/导出条 */
 .io-bar {
   display: flex; gap: 6px;
-  padding: 0 12px 10px;
+  padding: 0 12px 6px;
 }
 .btn.io { flex: 1; font-size: 11.5px; }
+
+/* 开关条 */
+.toggle-bar {
+  display: flex; gap: 10px;
+  padding: 0 12px 10px;
+}
+.toggle {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11.5px; color: var(--ink-2);
+  cursor: pointer; user-select: none;
+}
+.toggle input { margin: 0; accent-color: var(--accent); }
+.toggle input:checked + span { color: var(--accent); font-weight: 600; }
 
 /* 函数行 */
 .fn-list { padding: 4px 12px 12px; display: flex; flex-direction: column; gap: 10px; }
@@ -139,6 +152,9 @@ body {
 /* 关键：inline-block 让 <sup> 形成独立行内格式化上下文，
    光标进入指数时按 0.7em 字号渲染（缩小），而不是继承整行的大光标 */
 .fn-input sup.math-exp { display: inline-block; min-width: 0.35em; }
+
+/* ceil/floor 取整括号 ⎡⎤⎣⎦ */
+.fn-input .math-bracket { white-space: nowrap; font-family: "Cambria Math", "STIX Two Math", "SF Mono", ui-monospace, monospace; }
 
 .err {
   margin-top: 6px; font-size: 11.5px; color: var(--danger);

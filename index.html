@@ -6,7 +6,7 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <title>函数绘制器 · Function Plotter</title>
-  <link rel="stylesheet" href="styles.css?v=18" />
+  <link rel="stylesheet" href="styles.css?v=19" />
 </head>
 <body>
   <div class="app">
@@ -33,6 +33,17 @@
         <input id="import-file" type="file" accept=".json,application/json" style="display:none" />
       </div>
 
+      <div class="toggle-bar">
+        <label class="toggle" title="钉选点吸附到整数坐标格">
+          <input type="checkbox" id="snap-toggle" />
+          <span>吸附</span>
+        </label>
+        <label class="toggle" title="x 轴刻度改为 π 的倍数">
+          <input type="checkbox" id="trig-toggle" />
+          <span>π轴</span>
+        </label>
+      </div>
+
       <div id="fn-list" class="fn-list"></div>
     </aside>
 
@@ -45,7 +56,7 @@
     </main>
   </div>
 
-  <script src="expr.js?v=18"></script>
-  <script src="app.js?v=18"></script>
+  <script src="expr.js?v=19"></script>
+  <script src="app.js?v=19"></script>
 </body>
 </html>
