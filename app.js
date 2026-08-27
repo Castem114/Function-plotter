@@ -88,6 +88,8 @@
       if (a >= 1e6 || a < 1e-4) return num.toExponential(2);
       return (Math.round(num * 1e5) / 1e5).toString();
     }
+    // x 坐标格式化：三角轴模式下用 π 表示
+    fmtX(num) { return this.trigAxis ? this.fmtPi(num) : this.fmt(num); }
 
     draw() {
       const ctx = this.ctx;
@@ -117,13 +119,13 @@
       ctx.stroke(); ctx.restore();
       this._xStep = xStep; this._yStep = yStep;
     }
-    // 三角坐标轴：选一个 π/n 使得刻度数 ~8-12
+    // 三角坐标轴：步长 = π * 2^k，k 可正可负，使刻度数 ~8-12
+    //   缩进 → π/4, π/8…；缩出 → 2π, 4π, 8π…，不会因步长过小卡死
     trigStep() {
       const range = this.xMax - this.xMin;
-      const piRange = range / Math.PI;
-      const rawN = piRange / 10;
-      const n = Math.pow(2, Math.round(Math.log2(rawN)));
-      return Math.PI / Math.max(1, Math.min(n, 32));
+      const target = range / 10;
+      const k = Math.round(Math.log2(target / Math.PI));
+      return Math.PI * Math.pow(2, k);
     }
     // 把 x 值格式化为 π 的倍数字符串
     fmtPi(x) {
@@ -199,7 +201,7 @@
           ctx.beginPath(); ctx.moveTo(X, 0); ctx.lineTo(X, this.height); ctx.stroke();
           ctx.fillStyle = f.color; ctx.font = '11px ui-monospace, monospace';
           ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-          ctx.fillText('x=' + this.fmt(f.xVal), Math.min(X + 4, this.width - 40), 6);
+          ctx.fillText('x=' + this.fmtX(f.xVal), Math.min(X + 4, this.width - 40), 6);
           ctx.restore();
           continue;
         }
@@ -481,8 +483,8 @@
         ctx.restore();
         // 钉选点的坐标常驻浮标（右上角）
         const lines = p.type
-          ? [`${TYPE_LABEL[p.type] || '点'} ${p.label || ''}`, `(${this.fmt(p.x)}, ${this.fmt(p.y)})`]
-          : [`${p.label || ''}`, `(${this.fmt(p.x)}, ${this.fmt(p.y)})`];
+          ? [`${TYPE_LABEL[p.type] || '点'} ${p.label || ''}`, `(${this.fmtX(p.x)}, ${this.fmt(p.y)})`]
+          : [`${p.label || ''}`, `(${this.fmtX(p.x)}, ${this.fmt(p.y)})`];
         this.drawFloatingLabel(ctx, X, Y, lines, p.color);
       }
     }
@@ -508,13 +510,13 @@
         }
         // 在点的右上角浮出坐标标签
         const lines = hp.type
-          ? [`${TYPE_LABEL[hp.type] || '点'} ${hp.label || ''}`, `(${this.fmt(hp.x)}, ${this.fmt(hp.y)})`]
-          : [`${hp.label || ''}`, `(${this.fmt(hp.x)}, ${this.fmt(hp.y)})`];
+          ? [`${TYPE_LABEL[hp.type] || '点'} ${hp.label || ''}`, `(${this.fmtX(hp.x)}, ${this.fmt(hp.y)})`]
+          : [`${hp.label || ''}`, `(${this.fmtX(hp.x)}, ${this.fmt(hp.y)})`];
         this.drawFloatingLabel(ctx, X, Y, lines, hp.color);
       } else if (h.cursor) {
         // 没碰到曲线时，在鼠标右上角显示坐标
         const X = this.px(h.cursor.x), Y = this.py(h.cursor.y);
-        this.drawFloatingLabel(ctx, X, Y, [`(${this.fmt(h.cursor.x)}, ${this.fmt(h.cursor.y)})`], '#495057');
+        this.drawFloatingLabel(ctx, X, Y, [`(${this.fmtX(h.cursor.x)}, ${this.fmt(h.cursor.y)})`], '#495057');
       }
     }
 
@@ -594,7 +596,7 @@
       if (p.type === 'inter' && p.j != null) {
         const g = this.functions[p.j];
         const la = f ? f.label : '?';
-        const lb = g ? (g.kind === 'vertical' ? 'x=' + this.fmt(g.xVal) : g.label) : '?';
+        const lb = g ? (g.kind === 'vertical' ? 'x=' + this.fmtX(g.xVal) : g.label) : '?';
         return la + '∩' + lb;
       }
       return f ? f.label : '?';
@@ -1135,7 +1137,7 @@
       const entry = { color: rec.color, visible: rec.visible, kind: rec.kind };
       if (rec.kind === 'vertical') {
         if (rec.dynX && rec.fn) { try { rec.xVal = rec.fn(0); } catch (e) { rec.xVal = NaN; } } // 含参数的竖直线：按当前滑块值实时计算
-        entry.xVal = rec.xVal; entry.label = 'x=' + plotter.fmt(rec.xVal);
+        entry.xVal = rec.xVal; entry.label = 'x=' + plotter.fmtX(rec.xVal);
       }
       else if (rec.kind === 'implicit') { entry.fn = rec.fn; entry.label = '隐式'; }
       else { entry.fn = rec.fn; entry.label = 'f' + sub(fi + 1); fi++; }
@@ -1150,12 +1152,12 @@
   function updateReadout(h) {
     if (!h || !h.cursor) { els.readout.style.opacity = '0'; return; }
     const c = h.cursor;
-    let html = `<span class="ro-coord">x = ${plotter.fmt(c.x)}</span><span class="ro-coord">y = ${plotter.fmt(c.y)}</span>`;
+    let html = `<span class="ro-coord">x = ${plotter.fmtX(c.x)}</span><span class="ro-coord">y = ${plotter.fmt(c.y)}</span>`;
     let vi = 0;
     for (const rec of rows.values()) {
       if (!rec.visible) continue;
       if (rec.kind === 'vertical') {
-        html += `<span class="ro-fn"><i style="background:${rec.color}"></i>x=${plotter.fmt(rec.xVal)}</span>`;
+        html += `<span class="ro-fn"><i style="background:${rec.color}"></i>x=${plotter.fmtX(rec.xVal)}</span>`;
       } else if (rec.kind === 'implicit') {
         html += `<span class="ro-fn"><i style="background:${rec.color}"></i>隐式</span>`;
       } else if (rec.fn) {
@@ -1175,18 +1177,18 @@
     if (h && h.special) {
       top = `<div class="hb-top"><span class="hb-tag ${h.special.type}">${TYPE_LABEL[h.special.type] || ''}</span>` +
         `<span class="hb-lbl">${escapeHtml(h.special.label || '')}</span>` +
-        `<b>(${plotter.fmt(h.special.x)}, ${plotter.fmt(h.special.y)})</b></div>`;
+        `<b>(${plotter.fmtX(h.special.x)}, ${plotter.fmt(h.special.y)})</b></div>`;
     } else if (h && h.point) {
       top = `<div class="hb-top"><span class="hb-tag point">点</span>` +
         `<span class="hb-lbl">${escapeHtml(h.point.label || '')}</span>` +
-        `<b>(${plotter.fmt(h.point.x)}, ${plotter.fmt(h.point.y)})</b></div>`;
+        `<b>(${plotter.fmtX(h.point.x)}, ${plotter.fmt(h.point.y)})</b></div>`;
     } else if (h && h.cursor) {
-      top = `<div class="hb-top"><b>(${plotter.fmt(h.cursor.x)}, ${plotter.fmt(h.cursor.y)})</b></div>`;
+      top = `<div class="hb-top"><b>(${plotter.fmtX(h.cursor.x)}, ${plotter.fmt(h.cursor.y)})</b></div>`;
     }
     const pins = plotter.pinned.map((p, i) =>
       `<div class="hb-pin"><span class="hb-tag ${p.type}">${TYPE_LABEL[p.type] || ''}</span>` +
       `<span class="hb-lbl">${escapeHtml(p.label || '')}</span>` +
-      `<b>(${plotter.fmt(p.x)}, ${plotter.fmt(p.y)})</b>` +
+      `<b>(${plotter.fmtX(p.x)}, ${plotter.fmt(p.y)})</b>` +
       `<button class="hb-x" data-i="${i}" title="移除">✕</button></div>`
     ).join('');
     const pinsHtml = pins ? `<div class="hb-pins"><div class="hb-pins-h">钉选点</div>${pins}</div>` : '';
