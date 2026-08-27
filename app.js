@@ -302,13 +302,34 @@
       // 极值（导数符号变化）
       const h = Math.max((xMax - xMin) / N / 4, 1e-5);
       for (let a = 0; a < funcIdx.length; a++) {
-        const i = funcIdx[a];
+        const i = funcIdx[a], y = Y[a];
+        // 先判断函数值范围：若 max-min 相对极小 → 近常函数（含数值求导得到的常数
+        // 如 (2x)'=2），其"导数"全是浮点噪声，跳过极值检测
+        let maxY = -Infinity, minY = Infinity, maxAbsY = 0;
+        for (let k = 0; k <= N; k++) {
+          const v = y[k];
+          if (!isFinite(v)) continue;
+          if (v > maxY) maxY = v;
+          if (v < minY) minY = v;
+          if (Math.abs(v) > maxAbsY) maxAbsY = Math.abs(v);
+        }
+        const tolRange = 1e-9 * (1 + maxAbsY);
+        if (maxY - minY < tolRange) continue; // 近常函数：无极值
         const d = x => { const y1 = ev(i, x - h), y2 = ev(i, x + h); if (!isFinite(y1) || !isFinite(y2)) return NaN; return (y2 - y1) / (2 * h); };
+        // 先算出所有导数值，再以其最大幅度设定噪声阈值（相对，避免阈值随函数值范围
+        // 放大而误杀极值附近的真实小导数；噪声 ~1e-14，真极值附近导数 >> 此阈值）
+        const dks = new Array(N + 1);
+        let maxAbsD = 0;
+        for (let k = 0; k <= N; k++) {
+          const dk = d(xs[k]); dks[k] = dk;
+          if (isFinite(dk) && Math.abs(dk) > maxAbsD) maxAbsD = Math.abs(dk);
+        }
+        const tolD = 1e-9 * (1 + maxAbsD);
         let prevSign = 0;
         for (let k = 0; k <= N; k++) {
-          const dk = d(xs[k]);
+          const dk = dks[k];
           if (!isFinite(dk)) { prevSign = 0; continue; }
-          const s = Math.sign(dk);
+          const s = Math.abs(dk) < tolD ? 0 : Math.sign(dk);
           if (prevSign !== 0 && s !== 0 && s !== prevSign) {
             const root = this.bisect(d, xs[k - 1], xs[k]);
             if (root != null) {
