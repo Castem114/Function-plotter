@@ -878,7 +878,20 @@
     diffBtn.addEventListener('click', () => {
       const raw = serializeMath(input).trim();
       if (!raw) return;
-      const wrapped = '(' + raw + ")'";
+      // 竖直线 x=c（含动态 x=a）没有可导的 y=f(x)，忽略
+      if (rec.kind === 'vertical') return;
+      let wrapped;
+      const eqAt = raw.indexOf('=');
+      if (eqAt >= 0) {
+        // 方程：只对右侧求导并保留左侧。y=x → y=(x)'；x^2+y^2=1 → x^2+y^2=(1)'
+        const lhs = raw.slice(0, eqAt).trim();
+        const rhs = raw.slice(eqAt + 1).trim();
+        if (!lhs || !rhs) return;
+        wrapped = lhs + '=(' + rhs + ")'";
+      } else {
+        // 普通函数/隐式表达式：(…)'
+        wrapped = '(' + raw + ")'";
+      }
       const color = PALETTE[rows.size % PALETTE.length];
       makeRow(wrapped, color);
       // 滚动到新行
